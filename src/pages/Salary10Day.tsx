@@ -112,17 +112,36 @@ const Salary10Day = () => {
     }
 
     try {
+      // Get the date based on the selected date range
+      const now = new Date();
+      let entryDate: Date;
+      
+      switch (formData.dateRange) {
+        case "1-10":
+          entryDate = new Date(now.getFullYear(), now.getMonth(), 1); // First day of the month
+          break;
+        case "10-20":
+          entryDate = new Date(now.getFullYear(), now.getMonth(), 11); // 11th day of the month
+          break;
+        case "20-30":
+          entryDate = new Date(now.getFullYear(), now.getMonth(), 21); // 21st day of the month
+          break;
+        default:
+          entryDate = new Date(); // Current date as fallback
+      }
+      
       console.log('Form data before submission:', {
         employeeId: formData.employeeId,
-        date: formatDate(new Date()),
+        date: formatDate(entryDate),
         amount: amount,
         liters: liters,
         animalType: formData.animalType,
+        dateRange: formData.dateRange
       });
 
       await addSalaryEntry({
         employeeId: formData.employeeId,
-        date: formatDate(new Date()),
+        date: formatDate(entryDate),
         amount: amount,
         liters: liters,
         animalType: formData.animalType,
@@ -178,8 +197,7 @@ const Salary10Day = () => {
         totalLiters,
         entryCount: employeeEntries.length,
         recentEntries: employeeEntries
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-          .slice(0, 5),
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
         avgDailyAmount: employeeEntries.length > 0 ? totalSalary / employeeEntries.length : 0,
       };
     });
@@ -478,8 +496,8 @@ const Salary10Day = () => {
                           
                           {employee.recentEntries.length > 0 && (
                             <div>
-                              <h4 className="font-medium mb-2">Recent Entries</h4>
-                              <div className="space-y-2">
+                              <h4 className="font-medium mb-2">Complete Lifetime Records</h4>
+                              <div className="space-y-2 max-h-[400px] overflow-y-auto">
                                 {employee.recentEntries.map((entry) => (
                                   <div key={entry.id} className="flex items-center justify-between p-2 bg-background rounded border">
                                     <div className="flex items-center space-x-3">
@@ -595,7 +613,6 @@ const Salary10Day = () => {
                       <TableBody>
                         {salaryEntries
                           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                          .slice(0, 50)
                           .map((entry) => {
                             const employee = employees.find(emp => emp.id === entry.employeeId);
                             const entryDate = new Date(entry.date);

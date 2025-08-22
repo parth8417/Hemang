@@ -19,6 +19,7 @@ const Summary = () => {
   const { paymentRecords, loading: paymentLoading, refetch: refetchPayments } = usePaymentRecords();
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("all");
+  const [activeTab, setActiveTab] = useState("overview");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -40,14 +41,54 @@ const Summary = () => {
       return employeeId === selectedEmployeeId;
     };
 
+    // First, combine current entries with historical entries from payment records
+    const allSalaryData = [...salaryEntries];
+    const allCreditData = [...creditEntries];
+    
+    // For each payment record, we should ensure its data is represented
+    paymentRecords.forEach(record => {
+      if (record.salaryAmount > 0) {
+        // Check if we have a matching salary entry for this payment
+        const matchingSalaryEntry = salaryEntries.find(entry => 
+          entry.employeeId === record.employeeId && 
+          Math.abs(entry.amount - record.salaryAmount) < 0.01
+        );
+        
+        if (!matchingSalaryEntry) {
+          // Add a synthetic historical entry
+          allSalaryData.push({
+            id: `historical-salary-${record.id}`,
+            employeeId: record.employeeId,
+            date: record.paymentDate,
+            amount: record.salaryAmount,
+            liters: 0, // We don't know this historically
+            animalType: 'cow', // Default value
+            createdAt: record.createdAt
+          });
+        }
+      }
+      
+      if (record.creditDeducted > 0) {
+        // Add a synthetic historical credit entry if needed
+        allCreditData.push({
+          id: `historical-credit-${record.id}`,
+          employeeId: record.employeeId,
+          date: record.paymentDate,
+          itemName: "Historical Credit (Settled)",
+          amount: record.creditDeducted,
+          createdAt: record.createdAt
+        });
+      }
+    });
+
     return {
       employees: selectedEmployeeId && selectedEmployeeId !== "all"
         ? employees.filter(emp => emp.id === selectedEmployeeId) 
         : employees,
-      salaryEntries: salaryEntries
+      salaryEntries: allSalaryData
         .filter(entry => filterByDate(entry.date) && filterByEmployee(entry.employeeId))
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-      creditEntries: creditEntries
+      creditEntries: allCreditData
         .filter(entry => filterByDate(entry.date) && filterByEmployee(entry.employeeId))
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
       paymentRecords: paymentRecords
@@ -70,6 +111,30 @@ const Summary = () => {
       }))
     });
   }, [salaryEntries]);
+  
+  // Ensure we have fresh data when the component mounts
+  useEffect(() => {
+    // Refresh data when the component mounts
+    const loadInitialData = async () => {
+      setIsRefreshing(true);
+      try {
+        console.log('Initial data load...');
+        await Promise.all([
+          refetchEmployees(),
+          refetchSalary(),
+          refetchCredit(),
+          refetchPayments()
+        ]);
+        console.log('Initial data load complete');
+      } catch (error) {
+        console.error('Error loading initial data:', error);
+      } finally {
+        setIsRefreshing(false);
+      }
+    };
+    
+    loadInitialData();
+  }, []);
 
   // Calculate summary statistics with better error handling
   const stats = useMemo(() => {
@@ -159,12 +224,17 @@ const Summary = () => {
     setIsRefreshing(true);
     try {
       console.log('Refreshing all data...');
+      // Force a complete refresh of all data from the database
       await Promise.all([
         refetchEmployees(),
         refetchSalary(),
         refetchCredit(),
         refetchPayments()
       ]);
+      
+      // Add a small delay to ensure all hooks have updated their state
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
       console.log('All data refreshed successfully');
     } catch (error) {
       console.error('Error refreshing data:', error);
@@ -361,12 +431,12 @@ const Summary = () => {
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             {selectedEmployeeId && selectedEmployeeId !== "all"
-              ? `📊 Detailed lifetime records for: ${getEmployeeName(selectedEmployeeId)}` 
-              : "📈 Complete database records for all employees (sorted chronologically - latest first)"}
+              ? `📊 Detailed lifetime records for: ${getEmployeeName(selectedEmployeeId)} (including all historical entries)` 
+              : "📈 Complete historical database records for all employees (sorted chronologically - latest first)"}
           </p>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="overview" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
               <TabsTrigger value="overview" className="text-xs sm:text-sm">📋 Overview</TabsTrigger>
               <TabsTrigger value="salary" className="text-xs sm:text-sm">💰 Salary</TabsTrigger>
@@ -396,10 +466,18 @@ const Summary = () => {
                     const empCredits = filteredData.creditEntries || [];
                     const empPayments = filteredData.paymentRecords || [];
                     
+                    // Count historical entries
+                    const historicalSalaryEntries = empSalaries.filter(entry => 
+                      entry.id.toString().startsWith('historical-salary-')
+                    );
+                    const historicalCreditEntries = empCredits.filter(entry => 
+                      entry.id.toString().startsWith('historical-credit-')
+                    );
+                    
                     const totalEarned = safeCalculate(empSalaries, 'amount', 0);
                     const totalCredits = safeCalculate(empCredits, 'amount', 0);
                     const totalPaid = safeCalculate(empPayments, 'netPaid', 0);
-                    const totalMilk = safeCalculate(empSalaries, 'liters', 0);
+                    const totalMilk = safeCalculate(empSalaries.filter(e => !e.id.toString().startsWith('historical-')), 'liters', 0);
                     const avgRate = totalMilk > 0 ? Number((totalEarned / totalMilk).toFixed(2)) : 0;
                     const salaryAmountPaid = safeCalculate(empPayments, 'salaryAmount', 0);
                     const currentBalance = Number((totalEarned - totalCredits - salaryAmountPaid).toFixed(2));
@@ -418,10 +496,39 @@ const Summary = () => {
                                 <h2 className="text-2xl font-bold text-blue-900">👨‍🌾 {employee.name}</h2>
                                 <p className="text-blue-700">📱 Mobile: {employee.mobile}</p>
                                 <p className="text-blue-600 text-sm">📅 Joined: {formatDisplayDate(employee.createdAt)}</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">
+                                    {empPayments.length} Payment Records
+                                  </Badge>
+                                  {historicalSalaryEntries.length > 0 && (
+                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                      {historicalSalaryEntries.length} Historical Salary Entries
+                                    </Badge>
+                                  )}
+                                  {historicalCreditEntries.length > 0 && (
+                                    <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
+                                      {historicalCreditEntries.length} Historical Credit Entries
+                                    </Badge>
+                                  )}
+                                  <span className="text-sm text-blue-600">
+                                    (including historical settlements)
+                                  </span>
+                                </div>
                               </div>
                               <div className="text-right">
                                 <p className="text-sm text-blue-600">Employee ID</p>
                                 <p className="text-xs text-blue-500 font-mono">{employee.id.slice(-8)}</p>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="mt-2"
+                                  onClick={() => {
+                                    // Switch to payments tab using state
+                                    setActiveTab("payments");
+                                  }}
+                                >
+                                  View Payment History
+                                </Button>
                               </div>
                             </div>
                           </CardContent>
@@ -541,6 +648,66 @@ const Summary = () => {
                             </div>
                           </CardContent>
                         </Card>
+                        
+                        {/* Complete Payment History Card */}
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-lg flex items-center">
+                              <FileText className="h-5 w-5 mr-2" />
+                              Complete Lifetime Payment Records
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="bg-blue-50 p-4 mb-4 rounded-lg border border-blue-200">
+                              <p className="text-blue-800 text-sm">
+                                <strong>📌 Important:</strong> This section shows the complete payment history for this employee, 
+                                including all settled salary transactions. Each record represents a completed payment.
+                              </p>
+                            </div>
+                            
+                            {empPayments.length === 0 ? (
+                              <div className="text-center py-8 text-muted-foreground">
+                                <p>No payment records found for this employee.</p>
+                              </div>
+                            ) : (
+                              <div className="rounded-lg border overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow className="bg-muted/50">
+                                      <TableHead className="font-semibold">📅 Payment Date</TableHead>
+                                      <TableHead className="font-semibold">💰 Salary Amount</TableHead>
+                                      <TableHead className="font-semibold">🛒 Credit Deducted</TableHead>
+                                      <TableHead className="font-semibold">💵 Net Paid</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {empPayments.map((payment, index) => (
+                                      <TableRow key={payment.id} className={index % 2 === 0 ? "bg-muted/20" : ""}>
+                                        <TableCell>
+                                          <div className="flex flex-col">
+                                            <span className="font-medium">{formatDisplayDate(payment.paymentDate)}</span>
+                                            <span className="text-xs text-muted-foreground">
+                                              {Math.floor((new Date().getTime() - new Date(payment.paymentDate).getTime()) / (1000 * 60 * 60 * 24))} days ago
+                                            </span>
+                                          </div>
+                                        </TableCell>
+                                        <TableCell>
+                                          <span className="font-medium text-green-600">{formatCurrency(payment.salaryAmount)}</span>
+                                        </TableCell>
+                                        <TableCell>
+                                          <span className="font-medium text-orange-600">-{formatCurrency(payment.creditDeducted)}</span>
+                                        </TableCell>
+                                        <TableCell>
+                                          <span className="font-bold text-blue-600">{formatCurrency(payment.netPaid)}</span>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
                       </div>
                     );
                   })()
@@ -583,7 +750,12 @@ const Summary = () => {
                                 <div className="mt-2 text-xs text-muted-foreground">
                                   🥛 {totalMilk.toFixed(1)} L milk • {empSalaries.length} entries
                                 </div>
-                                <Button variant="outline" size="sm" className="mt-2 w-full">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="mt-2 w-full"
+                                  onClick={() => setSelectedEmployeeId(employee.id)}
+                                >
                                   View Details →
                                 </Button>
                               </div>
@@ -600,11 +772,15 @@ const Summary = () => {
             <TabsContent value="salary" className="mt-4">
               <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold text-green-800">💰 Salary Records Summary</h3>
+                  <h3 className="font-semibold text-green-800">💰 Complete Salary Records (Including Historical)</h3>
                   <Badge variant="secondary" className="bg-green-100 text-green-800">
                     {filteredData.salaryEntries.length} Total Entries
                   </Badge>
                 </div>
+                <p className="text-green-700 text-sm mb-3">
+                  This section shows all salary entries, including those from previous settlements.
+                  Entries marked as "Historical (Settled)" are reconstructed from payment records.
+                </p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   <div className="bg-white p-2 rounded border border-green-200">
                     <div className="font-medium text-green-700">💵 Total Amount</div>
@@ -649,43 +825,63 @@ const Summary = () => {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredData.salaryEntries.map((entry, index) => (
-                        <TableRow key={entry.id} className={index % 2 === 0 ? "bg-muted/20" : ""}>
-                          <TableCell className="font-medium">
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-foreground">{getEmployeeName(entry.employeeId).split(' (')[0]}</span>
-                              <span className="text-xs text-muted-foreground">📱 {getEmployeeName(entry.employeeId).split(' (')[1]?.replace(')', '') || 'N/A'}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{formatDisplayDate(entry.date)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                      filteredData.salaryEntries.map((entry, index) => {
+                        const isHistorical = entry.id.toString().startsWith('historical-salary-');
+                        
+                        return (
+                          <TableRow key={entry.id} className={isHistorical ? "bg-blue-50/50 dark:bg-blue-950/20" : index % 2 === 0 ? "bg-muted/20" : ""}>
+                            <TableCell className="font-medium">
+                              <div className="flex flex-col">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-foreground">{getEmployeeName(entry.employeeId).split(' (')[0]}</span>
+                                  {isHistorical && (
+                                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                      Historical (Settled)
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-xs text-muted-foreground">📱 {getEmployeeName(entry.employeeId).split(' (')[1]?.replace(')', '') || 'N/A'}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">{formatDisplayDate(entry.date)}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-semibold text-green-600">{formatCurrency(entry.amount)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-medium">
+                                {isHistorical ? 'Unknown' : `${entry.liters.toFixed(1)} L`}
                               </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-semibold text-green-600">{formatCurrency(entry.amount)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-medium">{entry.liters.toFixed(1)} L</span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={entry.animalType === 'cow' ? 'default' : 'secondary'} className="font-medium">
-                              {entry.animalType === 'cow' ? '🐄 Cow' : '🐃 Buffalo'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-medium text-blue-600">
-                              {entry.liters > 0 ? formatCurrency(entry.amount / entry.liters) : formatCurrency(0)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {formatDisplayDate(entry.createdAt)}
-                          </TableCell>
-                        </TableRow>
-                      ))
+                            </TableCell>
+                            <TableCell>
+                              {isHistorical ? (
+                                <Badge variant="outline" className="font-medium">
+                                  From Settled Record
+                                </Badge>
+                              ) : (
+                                <Badge variant={entry.animalType === 'cow' ? 'default' : 'secondary'} className="font-medium">
+                                  {entry.animalType === 'cow' ? '🐄 Cow' : '🐃 Buffalo'}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-medium text-blue-600">
+                                {isHistorical ? 'N/A' : entry.liters > 0 ? formatCurrency(entry.amount / entry.liters) : formatCurrency(0)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {formatDisplayDate(entry.createdAt)}
+                              {isHistorical && <div className="text-xs text-blue-600">From Payment Records</div>}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
                     )}
                   </TableBody>
                 </Table>
@@ -695,11 +891,15 @@ const Summary = () => {
             <TabsContent value="credit" className="mt-4">
               <div className="mb-4 p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg border border-orange-200">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold text-orange-800">🛒 Credit Purchase Records</h3>
+                  <h3 className="font-semibold text-orange-800">🛒 Complete Credit Records (Including Historical)</h3>
                   <Badge variant="secondary" className="bg-orange-100 text-orange-800">
                     {filteredData.creditEntries.length} Total Purchases
                   </Badge>
                 </div>
+                <p className="text-orange-700 text-sm mb-3">
+                  This section shows all credit entries, including those from previous settlements.
+                  Entries marked as "Historical (Settled)" are reconstructed from payment records.
+                </p>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                   <div className="bg-white p-2 rounded border border-orange-200">
                     <div className="font-medium text-orange-700">💵 Total Credit Amount</div>
@@ -743,37 +943,52 @@ const Summary = () => {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredData.creditEntries.map((entry, index) => (
-                        <TableRow key={entry.id} className={index % 2 === 0 ? "bg-muted/20" : ""}>
-                          <TableCell className="font-medium">
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-foreground">{getEmployeeName(entry.employeeId).split(' (')[0]}</span>
-                              <span className="text-xs text-muted-foreground">📱 {getEmployeeName(entry.employeeId).split(' (')[1]?.replace(')', '') || 'N/A'}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{formatDisplayDate(entry.date)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'short' })}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              <Badge variant="outline" className="font-medium">
-                                📦 {entry.itemName}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-semibold text-orange-600">{formatCurrency(entry.amount)}</span>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {formatDisplayDate(entry.createdAt)}
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      filteredData.creditEntries.map((entry, index) => {
+                        const isHistorical = entry.id.toString().startsWith('historical-credit-');
+                        
+                        return (
+                          <TableRow key={entry.id} className={isHistorical ? "bg-orange-50/50 dark:bg-orange-950/20" : index % 2 === 0 ? "bg-muted/20" : ""}>
+                            <TableCell className="font-medium">
+                              <div className="flex flex-col">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-foreground">{getEmployeeName(entry.employeeId).split(' (')[0]}</span>
+                                  {isHistorical && (
+                                    <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200">
+                                      Historical (Settled)
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-xs text-muted-foreground">📱 {getEmployeeName(entry.employeeId).split(' (')[1]?.replace(')', '') || 'N/A'}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">{formatDisplayDate(entry.date)}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center space-x-2">
+                                <Badge 
+                                  variant={isHistorical ? "secondary" : "outline"} 
+                                  className={isHistorical ? "font-medium bg-orange-100 text-orange-800 border-orange-200" : "font-medium"}
+                                >
+                                  📦 {entry.itemName}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-semibold text-orange-600">{formatCurrency(entry.amount)}</span>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {formatDisplayDate(entry.createdAt)}
+                              {isHistorical && <div className="text-xs text-orange-600">From Payment Records</div>}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
                     )}
                   </TableBody>
                 </Table>
@@ -812,6 +1027,18 @@ const Summary = () => {
                   </div>
                 </div>
               </div>
+              <div className="mb-4 p-4 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-lg border border-blue-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-blue-800">🔍 Complete Payment History (Including Settled Entries)</h3>
+                  <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                    {filteredData.paymentRecords.length} Total Records
+                  </Badge>
+                </div>
+                <p className="text-sm text-blue-700">
+                  This section shows all payment records, including those from settled salary transactions.
+                </p>
+              </div>
+              
               <div className="rounded-lg border overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -822,12 +1049,13 @@ const Summary = () => {
                       <TableHead className="font-semibold min-w-[130px]">🛒 Credit Deducted</TableHead>
                       <TableHead className="font-semibold min-w-[140px]">💵 Net Amount Paid</TableHead>
                       <TableHead className="font-semibold min-w-[120px]">⏰ Payment Time</TableHead>
+                      <TableHead className="font-semibold min-w-[120px]">📝 Details</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredData.paymentRecords.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-12">
                           <div className="flex flex-col items-center space-y-2">
                             <DollarSign className="h-12 w-12 text-muted-foreground/50" />
                             <p className="text-lg">No payment records found</p>
@@ -868,6 +1096,21 @@ const Summary = () => {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {formatDisplayDate(record.createdAt)}
+                          </TableCell>
+                          <TableCell>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="text-xs h-7" 
+                              onClick={() => {
+                                // When clicked, set the employee ID to filter to just this employee
+                                setSelectedEmployeeId(record.employeeId);
+                                // Switch to overview tab to show employee details
+                                setActiveTab("overview");
+                              }}
+                            >
+                              View History
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -961,7 +1204,10 @@ const Summary = () => {
                                   <Button 
                                     variant="ghost" 
                                     size="sm" 
-                                    onClick={() => setSelectedEmployeeId(employee.id)}
+                                    onClick={() => {
+                                      setSelectedEmployeeId(employee.id);
+                                      setActiveTab("overview");
+                                    }}
                                     className="h-6 px-2 text-xs"
                                   >
                                     View Details →

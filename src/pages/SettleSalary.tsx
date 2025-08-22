@@ -523,7 +523,7 @@ const SettleSalary = () => {
 
           {/* Settlement Preview Dialog */}
           <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="flex items-center space-x-2">
                   <FileText className="h-5 w-5" />
@@ -584,6 +584,94 @@ const SettleSalary = () => {
                   
                   <Separator />
                   
+                  {/* Employee's Salary Entry Details */}
+                  <div className="space-y-3">
+                    <h3 className="font-semibold flex items-center">
+                      <FileText className="h-4 w-4 mr-2" />
+                      Complete Lifetime Records
+                    </h3>
+                    <div className="bg-muted/50 p-4 rounded-lg max-h-[200px] overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Amount</TableHead>
+                            <TableHead>Liters</TableHead>
+                            <TableHead>Animal Type</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {salaryEntries
+                            .filter(entry => entry.employeeId === selectedEmployee.employeeId)
+                            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                            .map((entry) => (
+                              <TableRow key={entry.id}>
+                                <TableCell>{formatDisplayDate(entry.date)}</TableCell>
+                                <TableCell>{formatCurrency(entry.amount)}</TableCell>
+                                <TableCell>{entry.liters}L</TableCell>
+                                <TableCell>
+                                  <Badge variant={entry.animalType === 'cow' ? 'default' : 'secondary'} className="text-xs">
+                                    {entry.animalType === 'cow' ? '🐄' : '🐃'} {entry.animalType}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          }
+                          {salaryEntries.filter(entry => entry.employeeId === selectedEmployee.employeeId).length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={4} className="text-center text-muted-foreground">
+                                No salary entries found
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+
+                  <Separator />
+                  
+                  {/* Payment History */}
+                  <div className="space-y-3">
+                    <h3 className="font-semibold flex items-center">
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Payment History
+                    </h3>
+                    <div className="bg-muted/50 p-4 rounded-lg max-h-[150px] overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Salary Amount</TableHead>
+                            <TableHead>Credit Deducted</TableHead>
+                            <TableHead>Net Paid</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {paymentRecords
+                            .filter(record => record.employeeId === selectedEmployee.employeeId)
+                            .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime())
+                            .map((record) => (
+                              <TableRow key={record.id}>
+                                <TableCell>{formatDisplayDate(record.paymentDate)}</TableCell>
+                                <TableCell>{formatCurrency(record.salaryAmount)}</TableCell>
+                                <TableCell>{formatCurrency(record.creditDeducted)}</TableCell>
+                                <TableCell className="font-medium">{formatCurrency(record.netPaid)}</TableCell>
+                              </TableRow>
+                            ))
+                          }
+                          {paymentRecords.filter(record => record.employeeId === selectedEmployee.employeeId).length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={4} className="text-center text-muted-foreground">
+                                No previous payments found
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+
                   <div className="space-y-3">
                     <h3 className="font-semibold">Settlement Impact</h3>
                     <div className="bg-muted/50 p-4 rounded-lg space-y-2">
