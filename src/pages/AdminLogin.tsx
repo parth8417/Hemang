@@ -13,13 +13,25 @@ const AdminLogin = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Simple admin credentials (in production, this would be handled by proper authentication)
-  const ADMIN_USERNAME = "siddharth";
-  const ADMIN_PASSWORD = "siddharth@799";
+  // Admin credentials from environment variables
+  const ADMIN_USERNAME = import.meta.env.VITE_ADMIN_USERNAME;
+  const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+
+    // Check if environment variables are defined
+    if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+      console.error("Admin credentials not properly configured in environment variables");
+      toast({
+        title: "System Error",
+        description: "Authentication system is not properly configured. Please contact the administrator.",
+        variant: "destructive",
+      });
+      setIsLoading(false);
+      return;
+    }
 
     // Simulate authentication delay
     await new Promise(resolve => setTimeout(resolve, 1000));
